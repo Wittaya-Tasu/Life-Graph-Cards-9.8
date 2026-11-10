@@ -1,0 +1,77 @@
+name: Verify and publish V9.8
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: pages-v98
+  cancel-in-progress: false
+jobs:
+  verify:
+    if: github.repository == 'Wittaya-Tasu/Life-Graph-Cards-9.8'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Expand initial source package
+        run: |
+          if [ -f Promyan-V9.8-review.zip ]; then
+            python3 - <<'PY'
+          import zipfile,pathlib
+          with zipfile.ZipFile('Promyan-V9.8-review.zip') as z:
+            for item in z.infolist():
+              p=pathlib.PurePosixPath(item.filename)
+              if p.is_absolute() or '..' in p.parts: raise ValueError('Unsafe archive path')
+              if p.parts[0] != '.github': z.extract(item)
+          PY
+          fi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
+      - run: npm run test:ui
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v98-test-evidence
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
+      - name: Store verified source files
+        run: |
+          if [ -f Promyan-V9.8-review.zip ]; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add app images tests index.html promyan_wt_tuksa9.8.html README.md package.json package-lock.json playwright.config.cjs .gitignore .nojekyll
+            git rm Promyan-V9.8-review.zip
+            git commit -m 'Expand tested V9.8 source for normal maintenance'
+            git push
+          fi
+      - name: Prepare website files
+        run: |
+          mkdir -p _site
+          cp index.html promyan_wt_tuksa9.8.html .nojekyll _site/
+          cp -R app images _site/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+  deploy:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment
